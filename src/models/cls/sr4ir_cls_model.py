@@ -152,11 +152,33 @@ class SR4IRClassificationModel(BaseModel):
             self.optimizer_cls.zero_grad()
             l_total_cls = 0
             if hasattr(self, 'cri_ce_sr'):
-                pred_sr = self.net_cls(self.normalize(img_sr))
-                l_ce_sr = self.cri_ce_sr(pred_sr, label)
-                metric_logger.meters["l_ce_sr"].update(l_ce_sr.item())
-                self.tb_logger.add_scalar('losses/l_ce_sr', l_ce_sr.item(), current_iter)
-                l_total_cls += l_ce_sr
+             pred_sr = self.net_cls(self.normalize(img_sr))
+ 
+             # ---- YOUR ADDITION START ----
+             _, feat_sr = self.net_cls(self.normalize(img_sr), return_feats=True)
+             _, feat_hr = self.net_cls(self.normalize(img_hr), return_feats=True)
+ 
+             # quality score
+             quality = torch.norm(feat_sr - feat_hr, dim=1)
+ 
+             # weight
+             weight = torch.exp(-quality)
+             weight = torch.clamp(weight, min=0.2)
+             # ---- YOUR ADDITION END ----
+ 
+             # original CE loss
+             l_ce_sr = self.cri_ce_sr(pred_sr, label)
+ 
+             # ensure per-sample
+             if len(l_ce_sr.shape) == 0:
+              l_ce_sr = l_ce_sr.repeat(img_sr.shape[0])
+ 
+             # apply weighting
+             l_ce_sr = (weight * l_ce_sr).mean()
+ 
+             metric_logger.meters["l_ce_sr"].update(l_ce_sr.item())
+             self.tb_logger.add_scalar('losses/l_ce_sr', l_ce_sr.item(), current_iter)
+             l_total_cls += l_ce_sr
             if hasattr(self, 'cri_ce_hr'):
                 pred_hr = self.net_cls(self.normalize(img_hr))
                 l_ce_hr = self.cri_ce_hr(pred_hr, label)
